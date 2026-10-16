@@ -1,47 +1,63 @@
-# העלאה לענן (Hugging Face Spaces)
+# הפעלה בענן
 
-כך הממשק זמין מכל מחשב או טלפון דרך קישור, בלי להתקין כלום. ב-Hugging Face Spaces יש שרת CPU בחינם, והוא מריץ את הממשק מתוך ה-`Dockerfile` שבמאגר.
+| אפשרות | מחיר | יתרונות | חסרונות |
+|---|---|---|---|
+| **Google Colab** (מומלץ להתחלה) | חינם | שרת עם GPU, ולכן הניתוח מהיר. קישור שנפתח מכל מכשיר | מפעילים בכל פעם מחדש (כ-3 דקות). הקישור מתחלף בכל הפעלה. השרת נכבה כשסוגרים את הלשונית |
+| **Hugging Face Spaces** | מנוי PRO, כ-9 דולר בחודש | כתובת קבועה שתמיד זמינה | בשרת הבסיסי (CPU) הניתוח איטי |
+| **המחשב שלך + קישור** | חינם | כתובת שעובדת כל עוד המחשב דולק | המחשב צריך להישאר דלוק |
 
-## פעם אחת: הקמה
+---
 
-1. **חשבון**: נרשמים ב-https://huggingface.co.
-2. **Space חדש**: לוחצים על התמונה שלכם ← **New Space**.
-   - Space name: למשל `basketball`
-   - SDK: **Docker** ← Blank
-   - Hardware: **CPU basic** (חינם)
-   - Visibility: **Public**. את הגישה סוגרים בסיסמה בשלב הבא.
-3. **סיסמה לממשק**: ב-Space ← **Settings** ← **Variables and secrets** ← **New secret**:
-   - Name: `COURTVISION_PASSWORD`
-   - Value: הסיסמה שתרצו
+## Google Colab (חינם, עם GPU)
 
-   בכניסה לממשק הדפדפן יבקש שם משתמש וסיסמה. שם המשתמש לא משנה, רק הסיסמה.
-4. **טוקן**: ב-Hugging Face ← **Settings** ← **Access Tokens** ← **Create new token** מסוג **Write**. מעתיקים אותו.
-5. **חיבור מ-GitHub**: במאגר `guyos2/basketball` ← **Settings** ← **Secrets and variables** ← **Actions**:
-   - בלשונית **Secrets** ← New repository secret: `HF_TOKEN` = הטוקן משלב 4
-   - בלשונית **Variables** ← New repository variable: `HF_SPACE` = `<שם-המשתמש>/basketball`
-6. **פרסום**: אחרי שהקוד נמצא ב-`main` (מיזוג ה-PR), כל עדכון ל-`main` מתפרסם לבד. אפשר גם להריץ ידנית: **Actions** ← **Deploy to Hugging Face** ← **Run workflow**.
+המחברת `colab/basketball.ipynb` מתקינה את הכלי על שרת של Google, מפעילה את הממשק ונותנת קישור וסיסמה.
 
-הבנייה הראשונה לוקחת כ-5–10 דקות (רואים אותה בלשונית **Logs** של ה-Space). אחר כך הממשק זמין בכתובת:
+### פעם אחת
+1. **מפתח קריאה ל-GitHub** (המאגר פרטי): ב-GitHub ← Settings ← Developer settings ← Personal access tokens ← **Fine-grained tokens** ← Generate new token.
+   - Repository access: **Only select repositories** ← `guyos2/basketball`
+   - Repository permissions ← **Contents: Read-only**
+2. **פתיחת המחברת**: נכנסים ל-https://colab.research.google.com ← **File ← Open notebook** ← לשונית **GitHub**. מסמנים **Include private repos**, מאשרים גישה, בוחרים את המאגר `guyos2/basketball`, את ה-branch ואת `colab/basketball.ipynb`. אפשרות אחרת: להוריד את הקובץ מ-GitHub ולהעלות אותו בלשונית **Upload**.
+3. **שמירת המפתח ב-Colab**: בסרגל הצד לוחצים על 🔑 (**Secrets**) ← Add new secret ← Name: `GITHUB_TOKEN`, Value: המפתח. מפעילים **Notebook access**.
+4. **File ← Save a copy in Drive**, כדי שבפעם הבאה המחברת תחכה לכם ב-Drive.
 
-```
-https://<שם-המשתמש>-basketball.hf.space
-```
+### בכל הפעלה
+1. **Runtime ← Change runtime type ← T4 GPU** ← Save.
+2. מריצים את תא 1 (התקנה, כ-2 דקות) ואת תא 2 (הפעלה).
+3. בסוף תא 2 מופיעים קישור וסיסמה. בכניסה מקלידים כל שם משתמש ואת הסיסמה.
+4. משאירים את הלשונית של Colab פתוחה. כשהיא נסגרת, או אחרי זמן ללא שימוש, השרת נכבה והקבצים נמחקים. את התוצאות מורידים מעמוד התוצאות.
 
-## בלי GitHub Actions
-אפשר לדחוף את הקבצים ל-Space ישירות מהמחשב:
+### מגבלות
+- **גודל סרטון**: עד כ-95MB. הקישור עובר דרך Cloudflare Tunnel בחינם, והוא לא מעביר קבצים גדולים יותר. לקטעים של התקפה או שתיים זה מספיק. אם הסרטון גדול מדי, אפשר לקצר אותו או לייצא אותו באיכות 1080p.
+- **זמן**: Colab בחינם מגביל את משך השימוש ואת זמינות ה-GPU. אם אין GPU פנוי, הכלי עובד גם בלעדיו, רק לאט יותר.
+
+---
+
+## Hugging Face Spaces (בתשלום)
+
+Hugging Face דורשים היום מנוי PRO כדי ליצור Space מסוג Docker. אם יש מנוי:
+
+1. **New Space** ← SDK: **Docker** ← Blank ← Hardware: CPU basic.
+2. ב-Space ← **Settings** ← **Variables and secrets** ← New secret: `COURTVISION_PASSWORD` = הסיסמה לממשק.
+3. ב-Hugging Face ← Settings ← **Access Tokens** ← טוקן מסוג **Write**.
+4. במאגר ב-GitHub ← Settings ← Secrets and variables ← Actions:
+   - בלשונית **Secrets**: `HF_TOKEN` = הטוקן
+   - בלשונית **Variables**: `HF_SPACE` = `<שם-המשתמש>/<שם-ה-Space>`
+5. כל עדכון ל-`main` מתפרסם לבד (`.github/workflows/deploy-huggingface.yml`). אפשר גם להריץ ידנית: Actions ← Deploy to Hugging Face ← Run workflow.
+
+הממשק יהיה בכתובת `https://<שם-המשתמש>-<שם-ה-Space>.hf.space`. סרטונים ותוצאות נמחקים בהפעלה מחדש, ובכל מקרה אחרי 48 שעות (`COURTVISION_KEEP_HOURS`).
+
+---
+
+## המחשב שלך + קישור (חינם)
+
+מפעילים את הממשק על המחשב (ראו README) ופותחים לו קישור ציבורי עם [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/):
 
 ```bash
-git clone https://huggingface.co/spaces/<שם-המשתמש>/basketball hf-space
-cp -r Dockerfile .dockerignore requirements.txt courtvision hf-space/
-cp deploy/huggingface/README.md hf-space/README.md
-cd hf-space && git add -A && git commit -m "Deploy" && git push
+COURTVISION_PASSWORD=הסיסמה-שלכם python -m courtvision serve
+cloudflared tunnel --url http://localhost:8000      # בחלון נוסף; מדפיס קישור https://....trycloudflare.com
 ```
 
-## מה כדאי לדעת
-- **מהירות**: בשרת החינמי יש 2 מעבדים, ולכן הניתוח איטי מאשר על מחשב רגיל. לקטעים ארוכים כדאי לבחור בהגדרות המתקדמות "ניתוח כל פריים שני". אפשר לשדרג ב-Settings ← Hardware לשרת עם GPU (בתשלום לפי שעה, המחיר מופיע שם). במקרה כזה צריך לבנות עם PyTorch ל-GPU: בשורה `ARG TORCH_INDEX` ב-`Dockerfile` מחליפים את `cpu` ב-`cu124`.
-- **אחסון**: הדיסק של ה-Space לא קבוע. סרטונים ותוצאות נמחקים כשה-Space מופעל מחדש, ובכל מקרה אחרי 48 שעות (`COURTVISION_KEEP_HOURS`). מה שחשוב, מורידים מהקישורים בעמוד התוצאות.
-- **שינה**: Space חינמי נרדם אחרי תקופה בלי שימוש, ומתעורר בכניסה הבאה. ההתעוררות לוקחת כדקה.
-- **גודל סרטון**: עד 500MB כברירת מחדל (`COURTVISION_MAX_UPLOAD_MB`).
+---
 
-## ענן אחר
-ה-`Dockerfile` עובד בכל שירות שמריץ קונטיינרים (Google Cloud Run, Render, Railway, Fly.io). השרת מאזין לפורט שבמשתנה `PORT`, וברירת המחדל היא 7860. צריך לפחות 4GB זיכרון.
+## שירותים אחרים
+ה-`Dockerfile` עובד בכל שירות שמריץ קונטיינרים (Google Cloud Run, Render, Railway, Fly.io). השרת מאזין לפורט שבמשתנה `PORT`, וברירת המחדל היא 7860. צריך לפחות 4GB זיכרון. ב-Windows/Mac ב-PowerShell מגדירים סיסמה כך: `$env:COURTVISION_PASSWORD="..."`.

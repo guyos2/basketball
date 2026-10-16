@@ -1,4 +1,4 @@
-# Publishes the web interface to a Hugging Face Space.
+# Publishes the web interface to a Hugging Face Space (Docker Spaces need a paid Hugging Face plan).
 # Setup (once): in the GitHub repository settings add the secret HF_TOKEN (a Hugging Face token with
 # write access) and the variable HF_SPACE (for example "your-name/basketball").
 name: Deploy to Hugging Face

@@ -21,7 +21,7 @@ pip install -r requirements.txt
 
 ## ממשק web (הדרך הקלה)
 
-**בענן:** אפשר להעלות את הממשק ל-Hugging Face Spaces בחינם ולהיכנס אליו מכל מכשיר. ההוראות ב-[docs/cloud.md](docs/cloud.md).
+**בענן, בחינם:** המחברת `colab/basketball.ipynb` מפעילה את הממשק ב-Google Colab על שרת עם GPU, ונותנת קישור שנפתח מכל מכשיר. ההוראות, וגם אפשרויות קבועות בתשלום, ב-[docs/cloud.md](docs/cloud.md).
 
 **על המחשב:**
 
