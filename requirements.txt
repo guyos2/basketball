@@ -3,6 +3,7 @@ opencv-python>=4.9
 scikit-learn>=1.4
 ultralytics>=8.3
 lap>=0.5.12  # needed by the ultralytics ByteTrack tracker
+imageio-ffmpeg>=0.5  # fast H.264 output that browsers play
 fastapi>=0.110
 uvicorn>=0.29
 python-multipart>=0.0.9

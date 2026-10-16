@@ -8,7 +8,8 @@ from pathlib import Path
 import cv2
 
 from . import demo
-from .calibration import Calibration, interactive_calibrate
+from .calibration import CameraTrack, interactive_calibrate, load_keyframes
+from .camera_motion import estimate_motion
 from .feedback import decision_text
 from .pipeline import analyze_detections, detect_video, write_outputs
 
@@ -30,22 +31,49 @@ def cmd_calibrate(args) -> None:
 
 
 def cmd_analyze(args) -> None:
-    calib = Calibration.load(args.calib)
-    print(f"Calibration: {len(calib.points)} points, mean error {calib.reprojection_error:.2f} m")
+    keyframes = load_keyframes(args.calib)
+    for frame, calib in keyframes.items():
+        print(f"Calibration on frame {frame}: {len(calib.points)} points, mean error {calib.reprojection_error:.2f} m")
 
-    def progress(done, total):
-        print(f"\rDetecting players and ball: frame {done}/{total}", end="", flush=True)
+    def progress(label):
+        return lambda done, total: print(f"\r{label}: frame {done}/{total}", end="", flush=True)
 
-    detections, fps = detect_video(args.video, args.model, args.stride, args.max_frames, progress)
+    motion = None
+    if not args.fixed_camera:
+        motion = estimate_motion(args.video, progress("Following the camera"))
+        print()
+        cap = cv2.VideoCapture(args.video)
+        size = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+        cap.release()
+        if motion.is_static(size):
+            print("The camera does not move.")
+            motion = None
+        else:
+            print(f"The camera moves (up to {motion.max_shift(size):.0f} px); the court follows it. "
+                  f"Lost track in {int((~motion.tracked).sum())} frames.")
+    elif len(keyframes) > 1:
+        sys.exit("Several calibrated frames only make sense for a moving camera (drop --fixed-camera).")
+    detections, fps = detect_video(args.video, args.model, args.stride, args.max_frames, progress("Detecting players and ball"))
     print()
-    analysis = analyze_detections(detections, calib, fps, args.events)
+    camera = CameraTrack(keyframes, motion, args.stride)
+    analysis = analyze_detections(detections, camera, fps, args.events)
     out = write_outputs(analysis, args.out, args.video, args.stride)
     _summary(analysis, out)
 
 
 def cmd_demo(args) -> None:
-    analysis = analyze_detections(demo.detections(), demo.calibration(), demo.FPS)
-    out = write_outputs(analysis, args.out)
+    if not args.moving:
+        analysis = analyze_detections(demo.detections(), demo.calibration(), demo.FPS)
+        out = write_outputs(analysis, args.out)
+        return _summary(analysis, out)
+    # A hand-held camera: render the play as a video, follow the camera, then analyze.
+    Path(args.out).mkdir(parents=True, exist_ok=True)
+    video = demo.render_video(Path(args.out) / "demo_input.mp4", moving=True)
+    motion = estimate_motion(video, lambda d, t: print(f"\rFollowing the camera: frame {d}/{t}", end="", flush=True))
+    print()
+    camera = CameraTrack({0: demo.calibration()}, motion)
+    analysis = analyze_detections(demo.detections(moving=True), camera, demo.FPS)
+    out = write_outputs(analysis, args.out, video)
     _summary(analysis, out)
 
 
@@ -82,11 +110,13 @@ def main(argv=None) -> None:
     p.add_argument("--model", default="yolo11n.pt", help="YOLO weights (larger = more accurate, e.g. yolo11m.pt)")
     p.add_argument("--stride", type=int, default=1, help="analyze every Nth frame")
     p.add_argument("--max-frames", type=int)
+    p.add_argument("--fixed-camera", action="store_true", help="skip camera-motion tracking (tripod videos)")
     p.add_argument("--out", default="output")
     p.set_defaults(func=cmd_analyze)
 
     p = sub.add_parser("demo", help="run the analysis on a built-in synthetic play")
     p.add_argument("--out", default="demo_output")
+    p.add_argument("--moving", action="store_true", help="film the play with a simulated hand-held camera")
     p.set_defaults(func=cmd_demo)
 
     p = sub.add_parser("serve", help="web interface: upload a video and analyze it in the browser")

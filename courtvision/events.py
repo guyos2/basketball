@@ -70,8 +70,9 @@ def possession_runs(held: list[int | None]) -> list[tuple[int, int, int]]:
     return runs
 
 
-def detect_events(states: list[FrameState], teams: dict[int, int], rim_px: Point | None,
+def detect_events(states: list[FrameState], teams: dict[int, int], rims: list[Point | None],
                   rim_radius_px: float, fps: float, cfg: EventConfig | None = None) -> list[Event]:
+    """`rims` is the rim pixel in every frame (it moves when the camera moves)."""
     cfg = cfg or EventConfig()
     held = smooth_possession([ball_holder(s, cfg) for s in states], cfg)
     for s, h in zip(states, held):
@@ -82,8 +83,8 @@ def detect_events(states: list[FrameState], teams: dict[int, int], rim_px: Point
     for k, (holder, _, end) in enumerate(runs):
         nxt = runs[k + 1] if k + 1 < len(runs) else None
         flight_end = min(nxt[1] if nxt else len(states), end + max_flight + 1)
-        reached_rim = rim_px is not None and any(
-            states[i].ball is not None and math.dist(states[i].ball, rim_px) <= rim_radius_px
+        reached_rim = any(
+            states[i].ball is not None and rims[i] is not None and math.dist(states[i].ball, rims[i]) <= rim_radius_px
             for i in range(max(end - 2, 0), flight_end)
         )
         if reached_rim:

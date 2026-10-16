@@ -38,18 +38,25 @@
     <details class="tips">
       <summary>איך לצלם כדי שהניתוח יעבוד</summary>
       <ul>
-        <li>מצלמה <strong>קבועה על חצובה</strong>. אם המצלמה זזה, המפה לא תתאים לסרטון.</li>
         <li>כמה שיותר <strong>גבוה</strong>: ביציע, על מעקה או על קיר.</li>
         <li>שכל <strong>חצי המגרש</strong> ייכנס לתמונה, כולל הסל וקווי הצבע.</li>
+        <li>אפשר לצלם <strong>ביד</strong>: הכלי עוקב אחרי תנועת המצלמה. עדיף לזוז לאט ולא לעשות זום חד. חצובה עדיין נותנת את התוצאה הכי מדויקת.</li>
       </ul>
     </details>
-    <p class="muted">אין סרטון בהישג יד? <button class="link" id="demo-btn">נסו את הדמו</button></p>
+    <p class="muted">אין סרטון בהישג יד? <button class="link" id="demo-btn">נסו את הדמו</button> (מהלך מדומה שצולם במצלמה ביד)</p>
   </section>
 
   <!-- 2. Calibrate -->
   <section class="card hidden" id="calibrate-section">
     <h2>2. סימון נקודות במגרש</h2>
     <p>בוחרים נקודה ברשימה או במגרש הקטן, ולוחצים עליה בתמונה. צריך <strong>לפחות 4 נקודות על הרצפה</strong>, מפוזרות ככל האפשר. בנוסף מסמנים את <strong>מרכז הטבעת</strong>.</p>
+    <p class="motion" id="motion-status"></p>
+    <div class="scrub">
+      <label for="frame-slider">פריים לסימון</label>
+      <input type="range" id="frame-slider" min="0" max="0" value="0" dir="ltr" disabled>
+      <span id="frame-time" class="pill">0:00.0</span>
+    </div>
+    <div class="row hidden" id="keyframes-row"><span class="muted">פריימים מסומנים:</span><span id="keyframes" class="chips"></span></div>
     <div class="calib">
       <div class="frame-box">
         <canvas id="frame-canvas"></canvas>
@@ -90,7 +97,7 @@
       </aside>
     </div>
     <p class="error hidden" id="calib-error"></p>
-    <button id="analyze-btn" class="primary" disabled>התחל ניתוח</button>
+    <div class="row"><button id="analyze-btn" class="primary" disabled>התחל ניתוח</button><span class="muted" id="analyze-hint"></span></div>
   </section>
 
   <!-- 3. Progress -->
@@ -108,6 +115,7 @@
     <div class="stats" id="stats"></div>
     <p class="notice hidden" id="no-events">לא זוהו מסירות או זריקות. ייתכן שהכדור לא זוהה מספיק טוב. אפשר לסמן אותן ידנית למטה ולנתח שוב.</p>
     <video id="court-video" controls playsinline></video>
+    <p class="muted small hidden" id="court-video-error">הדפדפן לא מצליח להציג את הסרטון. נסו Chrome, Safari או Edge, או הורידו אותו מהקישור למטה.</p>
     <div id="decisions" class="decisions"></div>
 
     <div class="events-editor hidden" id="events-editor">

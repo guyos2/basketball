@@ -6,23 +6,46 @@ import pytest
 from fastapi.testclient import TestClient
 
 from courtvision import demo
+from courtvision.camera_motion import CameraMotion
 from courtvision.render import draw_court_overlay
 from courtvision.web import app as web
 
 
-@pytest.fixture
-def client(tmp_path, monkeypatch):
+def make_client(tmp_path, monkeypatch, real_motion: bool):
     calls = []
 
     def fake_detect(video, model, stride, progress=None):
         calls.append((video, model, stride))
-        return demo.detections(), demo.FPS
+        return c.fake_detections, demo.FPS
+
+    def fake_motion(video, progress=None, on_frame=None):
+        """Treat the camera as fixed without the (slow) feature matching; still emits every frame."""
+        cap = cv2.VideoCapture(str(video))
+        n = 0
+        while (frame := cap.read()[1]) is not None:
+            if on_frame:
+                on_frame(n, frame)
+            n += 1
+        return CameraMotion.static(n)
 
     monkeypatch.setattr(web, "detect_video", fake_detect)
-    c = TestClient(web.create_app(tmp_path / "ws"))
+    if not real_motion:
+        monkeypatch.setattr(web, "estimate_motion", fake_motion)
+    c = TestClient(web.create_app(tmp_path / "ws", password=""))
     c.detect_calls = calls
+    c.fake_detections = demo.detections()
     c.app_workspace = tmp_path / "ws"
     return c
+
+
+@pytest.fixture
+def client(tmp_path, monkeypatch):
+    return make_client(tmp_path, monkeypatch, real_motion=False)
+
+
+@pytest.fixture
+def motion_client(tmp_path, monkeypatch):
+    return make_client(tmp_path, monkeypatch, real_motion=True)
 
 
 @pytest.fixture
@@ -37,7 +60,7 @@ def video_file(tmp_path):
 
 
 def wait(client, job_id):
-    for _ in range(300):
+    for _ in range(4000):
         job = client.get(f"/api/jobs/{job_id}").json()
         if job["state"] in ("done", "error"):
             return job
@@ -69,7 +92,7 @@ def test_rejects_non_video(client, tmp_path):
 def test_upload_calibrate_analyze_and_rerun(client, video_file):
     job = upload(client, video_file).json()
     assert (job["width"], job["height"]) == (1280, 720)
-    assert client.get(f"/files/{job['id']}/frame.jpg").status_code == 200
+    assert client.get(f"/api/jobs/{job['id']}/frames/0.jpg").status_code == 200
 
     calib = demo.calibration()
     points = {k: list(v) for k, v in calib.points.items()}
@@ -106,11 +129,53 @@ def test_upload_calibrate_analyze_and_rerun(client, video_file):
     assert failed["state"] == "error" and "#99" in failed["error"]
 
 
-def test_demo_job(client):
+def test_demo_job(motion_client):
+    client = motion_client
     job = client.post("/api/demo").json()
     done = wait(client, job["id"])
-    assert done["state"] == "done"
+    assert done["state"] == "done", done["error"]
+    assert done["motion"]["moves"] is True
     assert done["results"]["decisions"][1]["recommended_target"] == 5
+    # Re-running the demo with a typed event uses the demo's own calibration and detections.
+    client.post(f"/api/jobs/{job['id']}/analyze", json={"events": [{"time": 3.0, "type": "shot"}]})
+    done = wait(client, job["id"])
+    assert done["state"] == "done", done["error"]
+    assert len(client.detect_calls) == 0
+
+
+def test_hand_held_video_with_a_later_marked_frame(motion_client, tmp_path):
+    client = motion_client
+    video = demo.render_video(tmp_path / "handheld.mp4", moving=True)
+    client.fake_detections = demo.detections(moving=True)
+    job = upload(client, video).json()
+    for _ in range(4000):
+        status = client.get(f"/api/jobs/{job['id']}").json()
+        if status["motion"]["state"] == "done":
+            break
+        time.sleep(0.05)
+    assert status["motion"]["moves"] and status["frames"] == int(demo.DURATION * demo.FPS)
+    assert client.get(f"/api/jobs/{job['id']}/frames/70.jpg").status_code == 200
+
+    base = demo.calibration()
+    view = demo.camera_shake(70 / demo.FPS)
+    keyframe = {"frame": 70, "points": {k: list(demo._warp([v], view)[0]) for k, v in base.points.items()},
+                "rim": list(demo._warp([base.rim_px], view)[0])}
+    body = {"keyframes": [keyframe], "rim_radius_px": base.rim_radius_px}
+    # The court lines can be checked on a frame that was not marked: they follow the camera.
+    preview = client.post(f"/api/jobs/{job['id']}/preview", json=dict(body, frame=20))
+    assert preview.status_code == 200, preview.text
+
+    client.post(f"/api/jobs/{job['id']}/analyze", json=body)
+    done = wait(client, job["id"])
+    assert done["state"] == "done", done["error"]
+    assert [d["verdict"] for d in done["results"]["decisions"]] == ["good", "should_pass"]
+
+
+def test_password(tmp_path):
+    c = TestClient(web.create_app(tmp_path / "ws", password="hoops"))
+    assert c.get("/").status_code == 401
+    assert c.get("/", auth=("coach", "wrong")).status_code == 401
+    assert c.get("/", auth=("coach", "hoops")).status_code == 200
 
 
 def test_files_cannot_escape_the_job(client, video_file):

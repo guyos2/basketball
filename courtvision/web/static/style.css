@@ -126,3 +126,18 @@ table.events { width: 100%; border-collapse: collapse; margin: 6px 0; }
 table.events th, table.events td { padding: 6px; border-bottom: 1px solid var(--line); text-align: start; }
 table.events input, table.events select { width: 100%; min-width: 60px; }
 .downloads a { color: var(--accent); margin-inline-end: 14px; }
+
+.motion { margin: 6px 0 10px; padding: 8px 12px; border-radius: 8px; background: color-mix(in srgb, var(--accent) 8%, transparent); font-size: 15px; }
+.motion:empty { display: none; }
+.motion.warn-text { background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.scrub { display: flex; align-items: center; gap: 10px; margin: 8px 0 12px; }
+.scrub label { margin: 0; white-space: nowrap; }
+.scrub input[type=range] { flex: 1; accent-color: var(--accent); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; }
+.chip button { border: 0; border-radius: 0; padding: 3px 10px; font-size: 14px; }
+.chip .x { color: var(--muted); padding: 3px 8px; }
+.chip.active { border-color: var(--accent); }
+.chip.active .go { font-weight: 700; }
+.chip.incomplete .go { color: var(--bad); }
+#analyze-hint { align-self: center; }

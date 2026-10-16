@@ -29,13 +29,15 @@ const state = {
   job: null,
   geometry: null,
   landmarks: {},
-  points: {}, // landmark -> [x, y] in video pixels, "rim" included
+  keyframes: {}, // video frame -> { landmark: [x, y] in video pixels, "rim" included }
+  frame: 0, // the frame shown for marking
   current: ORDER[0],
   image: null,
   mouse: null,
   events: [],
   showPreview: false,
   lastDone: null, // last finished job, shown again if a re-run fails
+  motionTimer: null,
 };
 
 // ---------- helpers ----------
@@ -57,11 +59,13 @@ function setStep(step) {
     li.classList.toggle("done", i < cur);
   });
 }
-function floorPoints() {
-  const out = {};
-  for (const [k, v] of Object.entries(state.points)) if (k !== "rim") out[k] = v;
-  return out;
+function clock(seconds) {
+  const m = Math.floor(seconds / 60), s = seconds - 60 * m;
+  return `${m}:${s.toFixed(1).padStart(4, "0")}`;
 }
+const frameTime = (f) => (state.job && state.job.fps ? f / state.job.fps : 0);
+const here = () => state.keyframes[state.frame] || {};
+function floorCount(points) { return Object.keys(points).filter((k) => k !== "rim").length; }
 function storageGet() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch { return null; } }
 function storageSet(v) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(v)); } catch { /* private mode */ } }
 
@@ -89,44 +93,97 @@ function upload(file) {
 
 function startCalibration(job) {
   state.job = job;
-  state.points = {};
+  state.keyframes = {};
   state.events = [];
-  state.showPreview = false;
+  state.lastDone = null;
   state.current = ORDER[0];
-  $("preview-img").removeAttribute("src");
-  show("preview-img", false);
-  show("frame-canvas");
-  const img = new Image();
-  img.onload = () => {
-    state.image = img;
-    show("calibrate-section");
-    show("upload-section", false);
-    setStep("calibrate");
-    const saved = storageGet();
-    show("load-calib", !!(saved && saved.width === job.width && saved.height === job.height));
-    refreshCalibration();
-    $("calibrate-section").scrollIntoView({ behavior: "smooth" });
-  };
-  img.src = `/files/${job.id}/frame.jpg`;
+  if (state.showPreview) togglePreview(false);
+  const slider = $("frame-slider");
+  slider.max = Math.max(job.frames - 1, 0);
+  slider.step = job.thumb_step;
+  slider.value = 0;
+  show("calibrate-section");
+  show("upload-section", false);
+  setStep("calibrate");
+  const saved = storageGet();
+  show("load-calib", !!(saved && saved.width === job.width && saved.height === job.height));
+  loadFrame(0, () => $("calibrate-section").scrollIntoView({ behavior: "smooth" }));
+  watchMotion();
 }
 
-// ---------- calibration ----------
+// While the court is being marked, the server follows the camera through the video.
+function watchMotion() {
+  clearTimeout(state.motionTimer);
+  const tick = async () => {
+    if (!state.job) return;
+    let job;
+    try { job = await api(`/api/jobs/${state.job.id}`); } catch { return; }
+    if (job.id !== state.job.id) return;
+    Object.assign(state.job, { frames: job.frames, motion: job.motion });
+    renderMotion();
+    if (job.motion.state === "pending" || job.motion.state === "running") state.motionTimer = setTimeout(tick, 1000);
+  };
+  tick();
+}
+
+function renderMotion() {
+  const m = state.job.motion, el = $("motion-status");
+  const ready = m.state === "done";
+  $("frame-slider").disabled = !ready;
+  $("frame-slider").max = Math.max(state.job.frames - 1, 0);
+  el.className = "motion";
+  if (m.state === "running" || m.state === "pending") {
+    el.textContent = `מנתח את תנועת המצלמה… ${Math.round(m.progress * 100)}% (אפשר להתחיל לסמן בינתיים)`;
+  } else if (m.state === "error") {
+    el.classList.add("warn-text");
+    el.textContent = `לא הצלחתי לעקוב אחרי המצלמה (${m.error}). הניתוח יניח שהמצלמה קבועה.`;
+  } else if (m.moves) {
+    el.textContent = "המצלמה זזה בסרטון, והסימון יעקוב אחריה. מומלץ לבדוק עם \"הצג קווי מגרש\" בכמה פריימים לאורך הסרטון. אם הקווים סוטים, סמנו נקודות גם בפריים ההוא.";
+    if (m.lost_frames) el.textContent += ` שימו לב: ב-${m.lost_frames} פריימים לא נמצאה התאמה (כנראה תנועה מהירה מדי).`;
+  } else {
+    el.textContent = "המצלמה קבועה – מספיק לסמן פריים אחד.";
+  }
+}
+
+// ---------- frames ----------
+function loadFrame(frame, then) {
+  const img = new Image();
+  img.onload = () => {
+    state.frame = frame;
+    state.image = img;
+    $("frame-time").textContent = `${clock(frameTime(frame))}`;
+    refreshCalibration();
+    if (then) then();
+  };
+  img.onerror = () => setError("calib-error", "הפריים עוד לא מוכן");
+  img.src = `/api/jobs/${state.job.id}/frames/${frame}.jpg`;
+}
+
+let sliderTimer = null;
+$("frame-slider").addEventListener("input", (e) => {
+  const frame = Number(e.target.value);
+  $("frame-time").textContent = clock(frameTime(frame));
+  clearTimeout(sliderTimer);
+  sliderTimer = setTimeout(() => loadFrame(frame), 120);
+});
+
+// ---------- calibration canvas ----------
 const canvas = $("frame-canvas");
 const ctx = canvas.getContext("2d");
 
 function drawFrame() {
   const img = state.image;
-  if (!img) return;
+  if (!img || !state.job) return;
   const width = canvas.clientWidth || 800;
   canvas.width = width * devicePixelRatio;
   canvas.height = (width * img.naturalHeight / img.naturalWidth) * devicePixelRatio;
-  const s = canvas.width / img.naturalWidth;
+  const s = canvas.width / state.job.width; // video pixels -> canvas pixels
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   const r = 7 * devicePixelRatio;
   ctx.font = `bold ${12 * devicePixelRatio}px Heebo, sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  for (const [name, [x, y]] of Object.entries(state.points)) {
+  for (const [name, [x, y]] of Object.entries(here())) {
     const isRim = name === "rim";
     ctx.beginPath();
     ctx.arc(x * s, y * s, isRim ? r * 1.4 : r, 0, 2 * Math.PI);
@@ -145,15 +202,16 @@ function drawFrame() {
 function drawLoupe(s) {
   if (!state.mouse) return;
   const [mx, my] = state.mouse; // video pixels
+  const k = state.image.naturalWidth / state.job.width; // video pixels -> stored frame pixels
   const size = 150 * devicePixelRatio, zoom = 3;
   const src = size / zoom / s;
-  const left = state.mouse[0] * s > canvas.width / 2;
+  const left = mx * s > canvas.width / 2;
   const ox = left ? 10 : canvas.width - size - 10, oy = 10;
   ctx.save();
   ctx.beginPath();
   ctx.rect(ox, oy, size, size);
   ctx.clip();
-  ctx.drawImage(state.image, mx - src / 2, my - src / 2, src, src, ox, oy, size, size);
+  ctx.drawImage(state.image, (mx - src / 2) * k, (my - src / 2) * k, src * k, src * k, ox, oy, size, size);
   ctx.restore();
   ctx.strokeStyle = "#fff";
   ctx.lineWidth = 2;
@@ -165,17 +223,18 @@ function drawLoupe(s) {
   ctx.stroke();
 }
 
-function eventToImage(e) {
+function eventToVideo(e) {
   const rect = canvas.getBoundingClientRect();
-  const s = state.image.naturalWidth / rect.width;
+  const s = state.job.width / rect.width;
   return [(e.clientX - rect.left) * s, (e.clientY - rect.top) * s];
 }
-canvas.addEventListener("mousemove", (e) => { state.mouse = eventToImage(e); drawFrame(); });
+canvas.addEventListener("mousemove", (e) => { state.mouse = eventToVideo(e); drawFrame(); });
 canvas.addEventListener("mouseleave", () => { state.mouse = null; drawFrame(); });
 canvas.addEventListener("click", (e) => {
-  const [x, y] = eventToImage(e);
-  state.points[state.current] = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
-  const next = ORDER.find((k) => !(k in state.points));
+  const [x, y] = eventToVideo(e);
+  const points = (state.keyframes[state.frame] ||= {});
+  points[state.current] = [Math.round(x * 10) / 10, Math.round(y * 10) / 10];
+  const next = ORDER.find((k) => !(k in points));
   if (next) state.current = next;
   refreshCalibration();
 });
@@ -185,20 +244,43 @@ function selectLandmark(name) { state.current = name; refreshCalibration(); }
 function renderList() {
   const list = $("landmark-list");
   list.innerHTML = "";
+  const points = here();
   ORDER.forEach((name, i) => {
     const li = document.createElement("li");
-    li.className = (name in state.points ? "set " : "") + (name === state.current ? "current" : "");
+    li.className = (name in points ? "set " : "") + (name === state.current ? "current" : "");
     li.innerHTML = `<span class="num">${name === "rim" ? "ט" : i + 1}</span><span>${LABELS[name]}</span>`;
-    if (name in state.points) {
+    if (name in points) {
       const rm = document.createElement("button");
       rm.className = "remove";
       rm.title = "מחק";
       rm.textContent = "✕";
-      rm.onclick = (ev) => { ev.stopPropagation(); delete state.points[name]; state.current = name; refreshCalibration(); };
+      rm.onclick = (ev) => {
+        ev.stopPropagation();
+        delete points[name];
+        if (!Object.keys(points).length) delete state.keyframes[state.frame];
+        state.current = name;
+        refreshCalibration();
+      };
       li.appendChild(rm);
     }
     li.onclick = () => selectLandmark(name);
     list.appendChild(li);
+  });
+}
+
+function renderKeyframes() {
+  const box = $("keyframes");
+  box.innerHTML = "";
+  const frames = Object.keys(state.keyframes).map(Number).sort((a, b) => a - b);
+  show("keyframes-row", frames.length > 1 || (frames.length === 1 && frames[0] !== state.frame));
+  frames.forEach((f) => {
+    const chip = document.createElement("span");
+    const n = floorCount(state.keyframes[f]);
+    chip.className = `chip ${f === state.frame ? "active" : ""} ${n < 4 ? "incomplete" : ""}`;
+    chip.innerHTML = `<button class="go">${clock(frameTime(f))} · ${n} נק'</button><button class="x" title="מחק סימון של פריים זה">✕</button>`;
+    chip.querySelector(".go").onclick = () => { $("frame-slider").value = f; loadFrame(f); };
+    chip.querySelector(".x").onclick = () => { delete state.keyframes[f]; refreshCalibration(); };
+    box.appendChild(chip);
   });
 }
 
@@ -229,9 +311,10 @@ function renderMiniCourt() {
   lines.forEach((d) => root.appendChild(svg("path", { d, class: "court-line" })));
   root.appendChild(svg("circle", { cx: bx, cy: by, r: 0.23, class: "court-line" }));
   const marks = { ...state.landmarks, rim: g.basket };
+  const points = here();
   ORDER.forEach((name, i) => {
     const [x, y] = marks[name];
-    const grp = svg("g", { class: `lm ${name in state.points ? "set" : ""} ${name === state.current ? "current" : ""}` });
+    const grp = svg("g", { class: `lm ${name in points ? "set" : ""} ${name === state.current ? "current" : ""}` });
     grp.appendChild(svg("circle", { cx: x, cy: y, r: name === "rim" ? 0.42 : 0.36 }));
     const t = svg("text", { x, y });
     t.textContent = name === "rim" ? "ט" : String(i + 1);
@@ -244,33 +327,54 @@ function renderMiniCourt() {
   });
 }
 
+function calibrationProblems() {
+  const frames = Object.keys(state.keyframes);
+  if (!frames.length) return "עוד לא סומנו נקודות";
+  const bad = frames.filter((f) => floorCount(state.keyframes[f]) < 4);
+  if (bad.length) return `בפריים ${bad.map((f) => clock(frameTime(Number(f)))).join(", ")} יש פחות מ-4 נקודות רצפה – השלימו או מחקו את הסימון שלו`;
+  return "";
+}
+
 function refreshCalibration() {
-  const n = Object.keys(floorPoints()).length;
-  const hasRim = "rim" in state.points;
+  const points = here();
+  const n = floorCount(points);
   $("current-label").textContent = `עכשיו מסמנים: ${LABELS[state.current]}`;
-  $("calib-status").textContent =
-    `סומנו ${n} נקודות רצפה${n < 4 ? ` (חסרות עוד ${4 - n})` : ""}` + (hasRim ? " + הטבעת" : " · הטבעת עוד לא סומנה");
-  $("analyze-btn").disabled = n < 4;
-  $("toggle-preview").disabled = n < 4;
-  if (n < 4 && state.showPreview) togglePreview(false);
+  $("calib-status").textContent = `בפריים הזה: ${n} נקודות רצפה${n && n < 4 ? ` (חסרות עוד ${4 - n})` : ""}`
+    + ("rim" in points ? " + הטבעת" : "");
+  const problem = calibrationProblems();
+  $("analyze-btn").disabled = !!problem;
+  $("analyze-hint").textContent = problem;
+  const motionReady = state.job && state.job.motion && state.job.motion.state === "done";
+  $("toggle-preview").disabled = !(n >= 4 || (motionReady && !problem));
   renderList();
+  renderKeyframes();
   if (state.geometry) renderMiniCourt();
-  drawFrame();
   if (state.showPreview) loadPreview();
+  else drawFrame();
 }
 
 function calibrationBody() {
-  return { points: floorPoints(), rim: state.points.rim || null, rim_radius_px: Number($("rim-radius").value) || 30 };
+  const keyframes = Object.entries(state.keyframes)
+    .filter(([, p]) => floorCount(p) >= 4)
+    .map(([frame, p]) => {
+      const points = {};
+      for (const [k, v] of Object.entries(p)) if (k !== "rim") points[k] = v;
+      return { frame: Number(frame), points, rim: p.rim || null };
+    });
+  return { keyframes, rim_radius_px: Number($("rim-radius").value) || 30 };
 }
 
+let previewSeq = 0;
 async function loadPreview() {
+  const seq = ++previewSeq;
   try {
-    const data = await postJSON(`/api/jobs/${state.job.id}/preview`, calibrationBody());
+    const data = await postJSON(`/api/jobs/${state.job.id}/preview`, { ...calibrationBody(), frame: state.frame });
+    if (seq !== previewSeq) return;
     $("preview-img").src = `${data.image}?t=${Date.now()}`;
     setError("calib-error", data.error_m > 0.3
       ? `שימו לב: הנקודות לא מתיישבות זו עם זו (סטייה ממוצעת ${data.error_m.toFixed(2)} מ'). בדקו שכל נקודה סומנה במקום הנכון.`
       : "");
-  } catch (err) { setError("calib-error", err.message); }
+  } catch (err) { if (seq === previewSeq) setError("calib-error", err.message); }
 }
 
 function togglePreview(on = !state.showPreview) {
@@ -279,16 +383,15 @@ function togglePreview(on = !state.showPreview) {
   show("frame-canvas", !on);
   $("toggle-preview").textContent = on ? "חזרה לסימון" : "הצג קווי מגרש";
   if (on) loadPreview();
-  else drawFrame();
+  else { setError("calib-error", ""); drawFrame(); }
 }
 
 $("toggle-preview").onclick = () => togglePreview();
-$("clear-calib").onclick = () => { state.points = {}; state.current = ORDER[0]; refreshCalibration(); };
+$("clear-calib").onclick = () => { state.keyframes = {}; state.current = ORDER[0]; refreshCalibration(); };
 $("load-calib").onclick = () => {
   const saved = storageGet();
   if (!saved) return;
-  state.points = { ...saved.points };
-  if (saved.rim) state.points.rim = saved.rim;
+  state.keyframes[state.frame] = { ...saved.points, ...(saved.rim ? { rim: saved.rim } : {}) };
   $("rim-radius").value = saved.rim_radius_px || 30;
   refreshCalibration();
 };
@@ -306,7 +409,10 @@ async function analyze(events) {
     $("progress-title").textContent = "לא ניתן להתחיל";
     return setError("progress-error", err.message);
   }
-  storageSet({ width: state.job.width, height: state.job.height, ...calibrationBody() });
+  if (!state.job.demo && body.keyframes.length) {
+    const first = body.keyframes[0];
+    storageSet({ width: state.job.width, height: state.job.height, points: first.points, rim: first.rim, rim_radius_px: body.rim_radius_px });
+  }
   watch();
 }
 $("analyze-btn").onclick = () => analyze(null);
@@ -315,11 +421,13 @@ $("demo-btn").onclick = async () => {
   const job = await api("/api/demo", { method: "POST" });
   state.job = job;
   state.events = [];
+  state.lastDone = null;
   show("upload-section", false);
   watch();
 };
 
 async function watch() {
+  clearTimeout(state.motionTimer);
   show("calibrate-section", false);
   show("results-section", false);
   show("progress-section");
@@ -329,12 +437,17 @@ async function watch() {
     let job;
     try { job = await api(`/api/jobs/${state.job.id}`); }
     catch (err) { return setError("progress-error", err.message); }
-    $("progress-fill").style.width = `${Math.round(job.progress * 100)}%`;
-    $("progress-stage").textContent = job.stage ? `${job.stage} – ${Math.round(job.progress * 100)}%` : "";
+    let progress = job.progress, stage = job.stage;
+    if (job.state === "queued" && job.motion.state === "running") {
+      progress = job.motion.progress;
+      stage = "מנתח את תנועת המצלמה";
+    }
+    $("progress-fill").style.width = `${Math.round(progress * 100)}%`;
+    $("progress-stage").textContent = stage ? `${stage} – ${Math.round(progress * 100)}%` : "";
     if (job.state === "done") { state.job = job; state.lastDone = job; return showResults(job); }
     if (job.state === "error") {
       if (state.lastDone && state.lastDone.id === job.id) showResults(state.lastDone); // keep the earlier results
-      else if (job.has_video) { show("calibrate-section"); setStep("calibrate"); }
+      else if (job.has_video && !job.demo) { show("calibrate-section"); setStep("calibrate"); }
       show("progress-section");
       $("progress-title").textContent = "הניתוח נכשל";
       setError("progress-error", job.error);
@@ -362,6 +475,8 @@ function showResults(job) {
   show("no-events", decisions.length === 0);
 
   const base = `/files/${job.id}/output`;
+  show("court-video-error", false);
+  $("court-video").onerror = () => show("court-video-error");
   $("court-video").src = r.video ? `${base}/${r.video}?t=${Date.now()}` : "";
   show("court-video", !!r.video);
 
@@ -382,10 +497,11 @@ function showResults(job) {
     list.appendChild(card);
   });
 
-  $("downloads").innerHTML = ["report.md", "report.json", "tracks.csv"]
-    .map((f) => `<a href="${base}/${f}" download>${f}</a>`).join("");
+  $("downloads").innerHTML = ["report.md", "report.json", "tracks.csv", r.video, r.source_video]
+    .filter(Boolean).map((f) => `<a href="${base}/${f}" download>${f}</a>`).join("");
 
   show("events-editor", job.has_video);
+  show("recalibrate", !job.demo);
   if (job.has_video) {
     if (!state.events.length) state.events = r.events.map((e) => ({ time: +e.time.toFixed(2), type: e.kind, player: e.player, target: e.target }));
     const v = $("source-video");
@@ -445,7 +561,9 @@ $("recalibrate").onclick = () => {
 };
 $("new-video").onclick = () => {
   state.job = null;
+  clearTimeout(state.motionTimer);
   show("results-section", false);
+  show("progress-section", false);
   show("upload-section");
   setStep("upload");
   $("file").value = "";

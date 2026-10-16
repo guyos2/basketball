@@ -100,3 +100,74 @@ def interactive_calibrate(frame: np.ndarray) -> Calibration:
     rim = ask("Click the RIM center (any key = skip)")
     cv2.destroyWindow(window)
     return Calibration(points=points, rim_px=rim)
+
+
+def load_keyframes(path: str | Path) -> dict[int, Calibration]:
+    """A calibration file: one calibration (optionally with "frame"), or {"keyframes": [...]}."""
+    data = json.loads(Path(path).read_text())
+    items = data["keyframes"] if "keyframes" in data else [data]
+    return {int(item.get("frame", 0)): Calibration(
+        points={k: tuple(v) for k, v in item["points"].items()},
+        rim_px=tuple(item["rim"]) if item.get("rim") else None,
+        rim_radius_px=float(item.get("rim_radius_px", data.get("rim_radius_px", 30.0))),
+    ) for item in items}
+
+
+class CameraTrack:
+    """Image -> court mapping for every analyzed frame, for a fixed or a moving camera.
+
+    `keyframes` are calibrations marked on specific video frames. With camera motion, each frame
+    uses the nearest marked frame, carried over by the motion between the two frames.
+    `stride` converts analysis frame indices to video frame indices.
+    """
+
+    def __init__(self, keyframes: dict[int, Calibration], motion=None, stride: int = 1):
+        if not keyframes:
+            raise ValueError("At least one calibrated frame is needed")
+        self.keyframes = dict(sorted(keyframes.items()))
+        self.motion = motion
+        self.stride = stride
+        self.rim_radius_px = next(iter(self.keyframes.values())).rim_radius_px
+        self._cache: dict[int, tuple[np.ndarray, Point | None]] = {}
+
+    @classmethod
+    def fixed(cls, calib: Calibration) -> "CameraTrack":
+        return cls({0: calib})
+
+    def _video_frame(self, k: int) -> int:
+        frame = k * self.stride
+        if self.motion is not None:
+            frame = min(frame, len(self.motion) - 1)
+        return frame
+
+    def _mapping(self, k: int) -> tuple[np.ndarray, Point | None]:
+        if k in self._cache:
+            return self._cache[k]
+        frame = self._video_frame(k)
+        key = min(self.keyframes, key=lambda f: abs(f - frame))
+        calib = self.keyframes[key]
+        if self.motion is None:
+            result = (calib.H, calib.rim_px)
+        else:
+            to_key = self.motion.between(frame, key)  # pixels of this frame -> pixels of the marked frame
+            H = calib.H @ to_key
+            rim = None
+            if calib.rim_px is not None:
+                p = cv2.perspectiveTransform(np.float64([[calib.rim_px]]), np.linalg.inv(to_key))[0, 0]
+                rim = (float(p[0]), float(p[1]))
+            result = (H, rim)
+        self._cache[k] = result
+        return result
+
+    def to_court(self, k: int, pixels) -> np.ndarray:
+        H, _ = self._mapping(k)
+        pts = np.asarray(pixels, dtype=np.float64).reshape(-1, 1, 2)
+        return cv2.perspectiveTransform(pts, H).reshape(-1, 2)
+
+    def to_image(self, k: int, court_points) -> np.ndarray:
+        H, _ = self._mapping(k)
+        pts = np.asarray(court_points, dtype=np.float64).reshape(-1, 1, 2)
+        return cv2.perspectiveTransform(pts, np.linalg.inv(H)).reshape(-1, 2)
+
+    def rim(self, k: int) -> Point | None:
+        return self._mapping(k)[1]

@@ -1,0 +1,33 @@
+# Publishes the web interface to a Hugging Face Space.
+# Setup (once): in the GitHub repository settings add the secret HF_TOKEN (a Hugging Face token with
+# write access) and the variable HF_SPACE (for example "your-name/basketball").
+name: Deploy to Hugging Face
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      HF_SPACE: ${{ vars.HF_SPACE }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Not configured
+        if: env.HF_TOKEN == '' || env.HF_SPACE == ''
+        run: echo "::notice::Add the HF_TOKEN secret and the HF_SPACE variable to deploy to Hugging Face."
+      - name: Push to the Space
+        if: env.HF_TOKEN != '' && env.HF_SPACE != ''
+        run: |
+          # One fresh commit with only what the Space needs (Hugging Face rejects plain binary files).
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git checkout --orphan space
+          git rm -rq --cached docs tests .github
+          cp deploy/huggingface/README.md README.md
+          git add Dockerfile .dockerignore requirements.txt README.md courtvision
+          git commit -qm "Deploy ${GITHUB_SHA::7}"
+          git push --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" space:main

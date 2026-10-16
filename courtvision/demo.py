@@ -8,6 +8,9 @@ leaves the corner to help, and #2 takes a contested mid-range shot while #5 is o
 """
 from __future__ import annotations
 
+from pathlib import Path
+
+import cv2
 import numpy as np
 
 from . import court
@@ -104,20 +107,75 @@ def _arc(a, b, s: float, lift: float):
     return (a[0] + s * (b[0] - a[0]), a[1] + s * (b[1] - a[1]) - lift * 4 * s * (1 - s))
 
 
-def detections(seed: int = 0) -> list[FrameDetections]:
+def camera_shake(t: float) -> np.ndarray:
+    """Hand-held camera: homography from the first frame's pixels to frame t's pixels (pan, tilt, zoom, roll)."""
+    w = 2 * np.pi * t / DURATION
+    scale = 1 + 0.10 * np.sin(w)
+    angle = np.radians(2.0 * np.sin(1.3 * w))
+    tx, ty = 140 * np.sin(w), 35 * np.sin(2 * w)
+    c, s = scale * np.cos(angle), scale * np.sin(angle)
+    cx, cy = 640, 360
+    return np.array([[c, -s, cx - c * cx + s * cy + tx], [s, c, cy - s * cx - c * cy + ty], [0, 0, 1]])
+
+
+def _warp(points, H: np.ndarray) -> np.ndarray:
+    return cv2.perspectiveTransform(np.float64(points).reshape(-1, 1, 2), H).reshape(-1, 2)
+
+
+def detections(seed: int = 0, moving: bool = False) -> list[FrameDetections]:
     rng = np.random.default_rng(seed)
     out = []
     for i in range(int(DURATION * FPS)):
         t = i / FPS
+        view = camera_shake(t) if moving else np.eye(3)
         players = []
         for track in PATHS:
+            x1, y1, x2, y2 = _bbox(position(track, t))
+            corners = _warp([[x1, y1], [x2, y1], [x2, y2], [x1, y2]], view)
+            box = (*corners.min(axis=0), *corners.max(axis=0))
             jitter = rng.normal(0, 1.5, 4)  # detector box noise in pixels
-            bbox = tuple(float(v) for v in np.add(_bbox(position(track, t)), jitter))
+            bbox = tuple(float(v) for v in np.add(box, jitter))
             color = TEAM_COLOR[track] + rng.normal(0, 6, 3)
             players.append(PlayerDetection(track, bbox, 0.9, color))
-        out.append(FrameDetections(i, players, ball=_ball(t)))
+        ball = _ball(t)
+        if ball is not None:
+            ball = tuple(float(v) for v in _warp([ball], view)[0])
+        out.append(FrameDetections(i, players, ball=ball))
     return out
 
 
 def calibration() -> Calibration:
     return Calibration(points=dict(CAMERA.points), rim_px=rim_pixel(), rim_radius_px=CAMERA.rim_radius_px)
+
+
+def render_video(path: str | Path, moving: bool = False, seed: int = 0) -> Path:
+    """Draw the demo play as a video: a textured gym (so camera motion can be tracked) with box players."""
+    from .render import draw_court_lines
+
+    rng = np.random.default_rng(seed)
+    margin = 400  # the world image extends past the first frame so a panning camera still sees texture
+    world_size = (1280 + 2 * margin, 720 + 2 * margin)
+    noise = rng.normal(0, 1, (world_size[1] // 8, world_size[0] // 8, 3))
+    world = cv2.resize(noise, world_size, interpolation=cv2.INTER_CUBIC)
+    world = np.clip(70 + 35 * world, 0, 255).astype(np.uint8)
+    shift = np.array([[1, 0, margin], [0, 1, margin], [0, 0, 1]], float)  # first-frame pixel -> world pixel
+    floor = np.round(_warp(CAMERA.to_image([[-1, -1], [16, -1], [16, 15], [-1, 15]]), shift)).astype(np.int32)
+    wood = world.copy()
+    cv2.fillPoly(wood, [floor], (120, 175, 215))
+    world = cv2.addWeighted(world, 0.25, wood, 0.75, 0)
+    draw_court_lines(world, lambda pts: _warp(CAMERA.to_image(pts), shift), (255, 255, 255), 3)
+
+    dets = detections(seed, moving)
+    path = Path(path)
+    writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*"mp4v"), FPS, (1280, 720))
+    for i, fd in enumerate(dets):
+        view = camera_shake(i / FPS) if moving else np.eye(3)
+        frame = cv2.warpPerspective(world, view @ np.linalg.inv(shift), (1280, 720), borderMode=cv2.BORDER_REFLECT)
+        for p in fd.players:
+            x1, y1, x2, y2 = (int(v) for v in p.bbox)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (240, 240, 240) if p.track_id < 10 else (40, 40, 200), -1)
+        if fd.ball:
+            cv2.circle(frame, (int(fd.ball[0]), int(fd.ball[1])), 7, (0, 110, 230), -1)
+        writer.write(frame)
+    writer.release()
+    return path

@@ -157,13 +157,19 @@ def _court_lines() -> list[np.ndarray]:
     ]
 
 
+def draw_court_lines(img: np.ndarray, to_image, color=(0, 255, 255), thickness: int = 2) -> None:
+    """Draw the court markings on a video frame, given a court -> pixel function."""
+    for line in _court_lines():
+        dense = np.vstack([np.linspace(a, b, 12) for a, b in zip(line[:-1], line[1:])])
+        pts = to_image(dense)
+        if np.all(np.isfinite(pts)):
+            cv2.polylines(img, [np.round(pts).astype(np.int32)], False, color, thickness, cv2.LINE_AA)
+
+
 def draw_court_overlay(frame: np.ndarray, calib) -> np.ndarray:
     """Project the court markings onto the video frame, to check a calibration by eye."""
     img = frame.copy()
-    for line in _court_lines():
-        dense = np.vstack([np.linspace(a, b, 12) for a, b in zip(line[:-1], line[1:])])
-        pts = calib.to_image(dense)
-        cv2.polylines(img, [np.round(pts).astype(np.int32)], False, (0, 255, 255), 2, cv2.LINE_AA)
+    draw_court_lines(img, calib.to_image)
     for name, px in calib.points.items():
         cv2.circle(img, (int(px[0]), int(px[1])), 6, (0, 0, 255), -1)
     if calib.rim_px:
