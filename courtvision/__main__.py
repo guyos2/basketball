@@ -49,11 +49,20 @@ def cmd_demo(args) -> None:
     _summary(analysis, out)
 
 
+def cmd_serve(args) -> None:
+    import uvicorn
+
+    from .web.app import create_app
+
+    print(f"Open http://localhost:{args.port} in your browser")
+    uvicorn.run(create_app(args.workspace), host=args.host, port=args.port, log_level="warning")
+
+
 def _summary(analysis, out: Path) -> None:
     print(f"Players on the map: {len(analysis.teams)}, events: {len(analysis.events)}")
     for d in analysis.decisions:
         print(decision_text(d))
-    print(f"\nOutputs in {out}/: report.md, report.json, tracks.csv, court2d.mp4, decisions/*.png")
+    print(f"\nOutputs in {out}/: report.md, report.json, tracks.csv, court2d video, decisions/*.png")
 
 
 def main(argv=None) -> None:
@@ -79,6 +88,12 @@ def main(argv=None) -> None:
     p = sub.add_parser("demo", help="run the analysis on a built-in synthetic play")
     p.add_argument("--out", default="demo_output")
     p.set_defaults(func=cmd_demo)
+
+    p = sub.add_parser("serve", help="web interface: upload a video and analyze it in the browser")
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8000)
+    p.add_argument("--workspace", default="workspace", help="where uploaded videos and results are kept")
+    p.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)
     args.func(args)

@@ -36,7 +36,7 @@ def test_demo_play_end_to_end(tmp_path):
     assert [d["verdict"] for d in report["decisions"]] == ["good", "should_pass"]
     assert "עדיף היה למסור ל-#5" in (out / "report.md").read_text()
     assert len(list((out / "decisions").glob("*.png"))) == 2
-    video = cv2.VideoCapture(str(out / "court2d.mp4"))
+    video = cv2.VideoCapture(str(out / report["video"]))
     assert video.get(cv2.CAP_PROP_FRAME_COUNT) > len(analysis.states)
 
 

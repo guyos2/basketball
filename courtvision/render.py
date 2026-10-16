@@ -134,3 +134,38 @@ def side_by_side(frame: np.ndarray, minimap: np.ndarray) -> np.ndarray:
     h = minimap.shape[0]
     scaled = cv2.resize(frame, (int(frame.shape[1] * h / frame.shape[0]), h))
     return np.hstack([scaled, minimap])
+
+
+def _court_lines() -> list[np.ndarray]:
+    """The court markings as polylines in court meters."""
+    def arc(center, radius, a0, a1, n=40):
+        a = np.radians(np.linspace(a0, a1, n))
+        return np.stack([center[0] + radius * np.cos(a), center[1] + radius * np.sin(a)], axis=1)
+
+    bx, by = court.BASKET
+    w, half = court.WIDTH, court.HALF_LENGTH
+    l, r = bx - court.LANE_HALF_WIDTH, bx + court.LANE_HALF_WIDTH
+    start = math.degrees(math.atan2(court.CORNER_THREE_Y - by, w - court.CORNER_THREE_X - bx))
+    three = np.vstack([[[w - court.CORNER_THREE_X, 0]], arc(court.BASKET, court.THREE_RADIUS, start, 180 - start),
+                       [[court.CORNER_THREE_X, 0]]])
+    return [
+        np.array([[0, 0], [w, 0], [w, half], [0, half], [0, 0]], float),
+        np.array([[l, 0], [l, court.LANE_LENGTH], [r, court.LANE_LENGTH], [r, 0]], float),
+        arc((bx, court.LANE_LENGTH), court.CIRCLE_RADIUS, 0, 180),
+        arc((bx, half), court.CIRCLE_RADIUS, 180, 360),
+        three,
+    ]
+
+
+def draw_court_overlay(frame: np.ndarray, calib) -> np.ndarray:
+    """Project the court markings onto the video frame, to check a calibration by eye."""
+    img = frame.copy()
+    for line in _court_lines():
+        dense = np.vstack([np.linspace(a, b, 12) for a, b in zip(line[:-1], line[1:])])
+        pts = calib.to_image(dense)
+        cv2.polylines(img, [np.round(pts).astype(np.int32)], False, (0, 255, 255), 2, cv2.LINE_AA)
+    for name, px in calib.points.items():
+        cv2.circle(img, (int(px[0]), int(px[1])), 6, (0, 0, 255), -1)
+    if calib.rim_px:
+        cv2.circle(img, (int(calib.rim_px[0]), int(calib.rim_px[1])), int(calib.rim_radius_px), (0, 140, 255), 2)
+    return img

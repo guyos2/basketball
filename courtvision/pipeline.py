@@ -71,7 +71,7 @@ def rim_position(calib: Calibration, detections: list[FrameDetections]):
 
 
 def analyze_detections(detections: list[FrameDetections], calib: Calibration, fps: float,
-                       manual_events: str | Path | None = None, decision_cfg: DecisionConfig | None = None,
+                       manual_events: str | Path | list[dict] | None = None, decision_cfg: DecisionConfig | None = None,
                        event_cfg: EventConfig | None = None) -> Analysis:
     states, teams, team_colors = build_states(detections, calib, fps)
     events = detect_events(states, teams, rim_position(calib, detections), calib.rim_radius_px, fps, event_cfg)
@@ -118,51 +118,82 @@ def _frames(cap: cv2.VideoCapture) -> Iterable[np.ndarray]:
         yield frame
 
 
-def write_outputs(analysis: Analysis, out_dir: str | Path, video: str | Path | None = None, stride: int = 1) -> Path:
-    """Write report.md, report.json, a snapshot per decision and the 2D video."""
+def open_video_writer(stem: Path, fps: float, size: tuple[int, int]) -> tuple[cv2.VideoWriter, Path]:
+    """Pick a codec that browsers can play: H.264 where OpenCV has it (macOS), otherwise VP8 WebM."""
+    for fourcc, ext in (("avc1", ".mp4"), ("VP80", ".webm"), ("mp4v", ".mp4")):
+        path = stem.with_suffix(ext)
+        writer = cv2.VideoWriter(str(path), cv2.VideoWriter_fourcc(*fourcc), fps, size)
+        if writer.isOpened():
+            return writer, path
+        writer.release()
+        path.unlink(missing_ok=True)
+    raise RuntimeError("OpenCV cannot write video on this machine")
+
+
+def write_outputs(analysis: Analysis, out_dir: str | Path, video: str | Path | None = None, stride: int = 1,
+                  progress: Callable[[int, int], None] | None = None) -> Path:
+    """Write report.md, report.json, tracks.csv, a snapshot per decision and the 2D video."""
     out = Path(out_dir)
     (out / "decisions").mkdir(parents=True, exist_ok=True)
+    for old in (out / "decisions").glob("*.png"):
+        old.unlink()
     canvas = CourtCanvas(analysis.team_colors)
     teams = analysis.teams
 
     duration = analysis.states[-1].time if analysis.states else 0.0
     (out / "report.md").write_text(report_markdown(analysis.decisions, duration), encoding="utf-8")
-    (out / "report.json").write_text(json.dumps({
-        "fps": analysis.fps,
-        "teams": {str(k): v for k, v in teams.items()},
-        "events": [asdict(e) for e in analysis.events],
-        "decisions": [dict(asdict(d), text=decision_text(d)) for d in analysis.decisions],
-    }, indent=2, ensure_ascii=False, default=float), encoding="utf-8")
     (out / "tracks.csv").write_text("frame,time,track_id,team,x_m,y_m,has_ball\n" + "".join(
         f"{s.index},{s.time:.3f},{p.track_id},{p.team},{p.xy[0]:.2f},{p.xy[1]:.2f},{int(p.track_id == s.holder)}\n"
         for s in analysis.states for p in s.players.values()
     ))
 
-    decision_frames = {}
+    decision_frames, images = {}, []
     for n, (k, d) in enumerate(zip(analysis.decision_frames, analysis.decisions), 1):
         img = canvas.draw_decision(analysis.states[k], teams, d)
-        cv2.imwrite(str(out / "decisions" / f"{n:02d}_{d.event_kind}_{d.time:05.1f}s.png"), img)
+        name = f"decisions/{n:02d}_{d.event_kind}_{d.time:05.1f}s.png"
+        cv2.imwrite(str(out / name), img)
+        images.append(name)
         decision_frames[k] = img
 
     cap = cv2.VideoCapture(str(video)) if video else None
     frames = (f for i, f in enumerate(_frames(cap)) if i % stride == 0) if cap else None
-    writer = None
+    writer, video_path = None, None
+    source_writer, source_path = None, None  # the original frames with player ids, same timeline as the analysis
     hold = int(analysis.fps * 1.5)  # freeze on each decision for 1.5 s
     for k, state in enumerate(analysis.states):
         minimap = canvas.draw_state(state, teams)
         frame = next(frames, None) if frames else None
-        img = side_by_side(annotate_frame(frame, state, teams, analysis.team_colors), minimap) if frame is not None else minimap
+        annotated = annotate_frame(frame, state, teams, analysis.team_colors) if frame is not None else None
+        img = side_by_side(annotated, minimap) if annotated is not None else minimap
+        if annotated is not None:
+            if source_writer is None:
+                source_writer, source_path = open_video_writer(out / "source", analysis.fps,
+                                                               (annotated.shape[1], annotated.shape[0]))
+            source_writer.write(annotated)
         if writer is None:
-            writer = cv2.VideoWriter(str(out / "court2d.mp4"), cv2.VideoWriter_fourcc(*"mp4v"), analysis.fps,
-                                     (img.shape[1], img.shape[0]))
+            writer, video_path = open_video_writer(out / "court2d", analysis.fps, (img.shape[1], img.shape[0]))
         writer.write(img)
         if k in decision_frames:
             still = decision_frames[k]
-            still = side_by_side(annotate_frame(frame, state, teams, analysis.team_colors), still) if frame is not None else still
+            still = side_by_side(annotated, still) if annotated is not None else still
             for _ in range(hold):
                 writer.write(still)
-    if writer:
-        writer.release()
+        if progress:
+            progress(k + 1, len(analysis.states))
+    for w in (writer, source_writer):
+        if w:
+            w.release()
     if cap:
         cap.release()
+
+    (out / "report.json").write_text(json.dumps({
+        "fps": analysis.fps,
+        "duration": duration,
+        "video": video_path.name if video_path else None,
+        "source_video": source_path.name if source_path else None,
+        "teams": {str(k): v for k, v in teams.items()},
+        "players": sorted(teams),
+        "events": [asdict(e) for e in analysis.events],
+        "decisions": [dict(asdict(d), text=decision_text(d), image=img) for d, img in zip(analysis.decisions, images)],
+    }, indent=2, ensure_ascii=False, default=float), encoding="utf-8")
     return out

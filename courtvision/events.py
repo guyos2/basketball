@@ -93,24 +93,26 @@ def detect_events(states: list[FrameState], teams: dict[int, int], rim_px: Point
     return events
 
 
-def load_manual_events(path: str | Path, states: list[FrameState]) -> list[Event]:
+def load_manual_events(source: str | Path | list[dict], states: list[FrameState]) -> list[Event]:
     """Events typed by hand: [{"time": 4.2, "type": "shot"|"pass", "player": 7, "target": 11}].
 
-    "player" may be left out when the ball holder is detected at that moment.
+    `source` is a JSON file or the list itself. "player" may be left out when the ball holder is
+    detected at that moment.
     """
+    items = source if isinstance(source, list) else json.loads(Path(source).read_text())
     events = []
-    for item in json.loads(Path(path).read_text()):
+    for item in sorted(items, key=lambda e: e["time"]):
         kind = item["type"]
         if kind not in ("shot", "pass"):
-            raise ValueError(f"Event type must be 'shot' or 'pass', got {kind!r}")
+            raise ValueError(f"סוג אירוע חייב להיות 'shot' או 'pass', התקבל {kind!r}")
         frame = min(range(len(states)), key=lambda i: abs(states[i].time - item["time"]))
         player = item.get("player")
         if player is None:
             nearby = [states[i].holder for i in range(max(frame - 3, 0), min(frame + 4, len(states)))]
             player = next((h for h in nearby if h is not None), None)
             if player is None:
-                raise ValueError(f"No ball holder found at {item['time']}s; add \"player\" to the event")
+                raise ValueError(f"לא זוהה מי מחזיק בכדור בשנייה {item['time']}. הוסיפו את מספר השחקן לאירוע.")
         if player not in states[frame].players:
-            raise ValueError(f"Player {player} is not on the court map at {item['time']}s")
+            raise ValueError(f"שחקן #{player} לא נמצא על המפה בשנייה {item['time']}.")
         events.append(Event(kind, frame, states[frame].time, int(player), item.get("target"), source="manual"))
     return events

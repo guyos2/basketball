@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ניתוח כדורסל</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏀</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="wrap">
+    <h1>זריקה או מסירה?</h1>
+    <p>מעלים קטע משחק, מסמנים את המגרש, ומקבלים מפה דו-ממדית וניתוח של כל החלטה.</p>
+  </div>
+</header>
+
+<main class="wrap">
+  <ol class="steps" id="steps">
+    <li data-step="upload" class="active">העלאה</li>
+    <li data-step="calibrate">סימון המגרש</li>
+    <li data-step="results">תוצאות</li>
+  </ol>
+
+  <!-- 1. Upload -->
+  <section class="card" id="upload-section">
+    <h2>1. העלאת סרטון</h2>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept="video/*" hidden>
+      <span class="drop-icon" aria-hidden="true">⬆</span>
+      <strong>גררו לכאן סרטון או לחצו לבחירה</strong>
+      <span class="muted">MP4 / MOV, עדיף 10–30 שניות</span>
+    </label>
+    <div class="bar hidden" id="upload-bar"><div></div></div>
+    <p class="error hidden" id="upload-error"></p>
+    <details class="tips">
+      <summary>איך לצלם כדי שהניתוח יעבוד</summary>
+      <ul>
+        <li>מצלמה <strong>קבועה על חצובה</strong>. אם המצלמה זזה, המפה לא תתאים לסרטון.</li>
+        <li>כמה שיותר <strong>גבוה</strong>: ביציע, על מעקה או על קיר.</li>
+        <li>שכל <strong>חצי המגרש</strong> ייכנס לתמונה, כולל הסל וקווי הצבע.</li>
+      </ul>
+    </details>
+    <p class="muted">אין סרטון בהישג יד? <button class="link" id="demo-btn">נסו את הדמו</button></p>
+  </section>
+
+  <!-- 2. Calibrate -->
+  <section class="card hidden" id="calibrate-section">
+    <h2>2. סימון נקודות במגרש</h2>
+    <p>בוחרים נקודה ברשימה או במגרש הקטן, ולוחצים עליה בתמונה. צריך <strong>לפחות 4 נקודות על הרצפה</strong>, מפוזרות ככל האפשר. בנוסף מסמנים את <strong>מרכז הטבעת</strong>.</p>
+    <div class="calib">
+      <div class="frame-box">
+        <canvas id="frame-canvas"></canvas>
+        <img id="preview-img" class="hidden" alt="קווי המגרש לפי הכיול">
+        <div class="frame-tools">
+          <span id="current-label" class="pill"></span>
+          <button id="toggle-preview" class="ghost" disabled>הצג קווי מגרש</button>
+        </div>
+      </div>
+      <aside class="side">
+        <svg id="mini-court" viewBox="-0.6 -0.6 16.2 15.2" aria-label="מפת נקודות"></svg>
+        <ul id="landmark-list" class="landmarks"></ul>
+        <p id="calib-status" class="muted"></p>
+        <div class="row">
+          <button id="load-calib" class="ghost hidden">טען כיול אחרון</button>
+          <button id="clear-calib" class="ghost">נקה הכל</button>
+        </div>
+        <details>
+          <summary>הגדרות מתקדמות</summary>
+          <label>מודל זיהוי
+            <select id="model">
+              <option value="yolo11n.pt">מהיר (nano)</option>
+              <option value="yolo11s.pt">מאוזן (small)</option>
+              <option value="yolo11m.pt">מדויק (medium)</option>
+            </select>
+          </label>
+          <label>ניתוח כל
+            <select id="stride">
+              <option value="1">פריים</option>
+              <option value="2">פריים שני (מהיר פי 2)</option>
+              <option value="3">פריים שלישי (מהיר פי 3)</option>
+            </select>
+          </label>
+          <label>רדיוס טבעת (פיקסלים)
+            <input type="number" id="rim-radius" value="30" min="5" max="200">
+          </label>
+        </details>
+      </aside>
+    </div>
+    <p class="error hidden" id="calib-error"></p>
+    <button id="analyze-btn" class="primary" disabled>התחל ניתוח</button>
+  </section>
+
+  <!-- 3. Progress -->
+  <section class="card hidden" id="progress-section">
+    <h2 id="progress-title">מנתח…</h2>
+    <div class="bar"><div id="progress-fill"></div></div>
+    <p class="muted" id="progress-stage"></p>
+    <p class="muted small">בהרצה הראשונה מודל הזיהוי יורד מהאינטרנט. על מחשב בלי כרטיס גרפי, ניתוח של דקת וידאו יכול לקחת כמה דקות.</p>
+    <p class="error hidden" id="progress-error"></p>
+  </section>
+
+  <!-- 4. Results -->
+  <section class="card hidden" id="results-section">
+    <h2>3. תוצאות</h2>
+    <div class="stats" id="stats"></div>
+    <p class="notice hidden" id="no-events">לא זוהו מסירות או זריקות. ייתכן שהכדור לא זוהה מספיק טוב. אפשר לסמן אותן ידנית למטה ולנתח שוב.</p>
+    <video id="court-video" controls playsinline></video>
+    <div id="decisions" class="decisions"></div>
+
+    <div class="events-editor hidden" id="events-editor">
+      <h3>תיקון ידני של זריקות ומסירות</h3>
+      <p class="muted">עוצרים את הסרטון ברגע שהכדור עוזב את הידיים ומוסיפים אירוע. המספר מעל כל שחקן הוא המספר שלו בניתוח. את מספר השחקן אפשר להשאיר ריק אם הכלי זיהה מי מחזיק בכדור.</p>
+      <video id="source-video" controls playsinline></video>
+      <p class="muted small hidden" id="source-video-error">הדפדפן לא מצליח להציג את הסרטון. אפשר להיעזר בזמן שמופיע מתחת למפה בסרטון התוצאות.</p>
+      <div class="row">
+        <button id="add-shot" class="ghost">＋ זריקה ברגע הזה</button>
+        <button id="add-pass" class="ghost">＋ מסירה ברגע הזה</button>
+      </div>
+      <table class="events">
+        <thead><tr><th>זמן (שנ')</th><th>סוג</th><th>שחקן</th><th>מקבל</th><th></th></tr></thead>
+        <tbody id="events-body"></tbody>
+      </table>
+      <div class="row">
+        <button id="rerun" class="primary" disabled>נתח שוב עם האירועים האלה</button>
+        <button id="recalibrate" class="ghost">שנה סימון מגרש</button>
+      </div>
+    </div>
+
+    <p class="downloads" id="downloads"></p>
+    <button id="new-video" class="ghost">העלאת סרטון אחר</button>
+  </section>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
