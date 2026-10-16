@@ -2,7 +2,11 @@
 from __future__ import annotations
 
 import argparse
+import socket
 import sys
+import threading
+import time
+import webbrowser
 from pathlib import Path
 
 import cv2
@@ -82,8 +86,22 @@ def cmd_serve(args) -> None:
 
     from .web.app import create_app
 
-    print(f"Open http://localhost:{args.port} in your browser")
+    url = f"http://localhost:{args.port}"
+    if args.open:
+        threading.Thread(target=_open_when_ready, args=(url, args.port), daemon=True).start()
+    print(f"\nThe interface runs at {url}\nKeep this window open while you use it; close it (or press Ctrl+C) to stop.\n")
     uvicorn.run(create_app(args.workspace), host=args.host, port=args.port, log_level="warning")
+
+
+def _open_when_ready(url: str, port: int) -> None:
+    """Open the browser once the server accepts connections."""
+    for _ in range(120):
+        try:
+            socket.create_connection(("127.0.0.1", port), timeout=1).close()
+            webbrowser.open(url)
+            return
+        except OSError:
+            time.sleep(0.5)
 
 
 def _summary(analysis, out: Path) -> None:
@@ -123,6 +141,7 @@ def main(argv=None) -> None:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--workspace", default="workspace", help="where uploaded videos and results are kept")
+    p.add_argument("--open", action="store_true", help="open the browser when the server is ready")
     p.set_defaults(func=cmd_serve)
 
     args = parser.parse_args(argv)

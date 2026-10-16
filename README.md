@@ -14,6 +14,10 @@
 
 ## התקנה
 
+**הדרך הפשוטה (Windows / Mac):** מורידים את הקוד, ואז לוחצים פעמיים על `start.bat` (Windows) או `start.command` (Mac). בפעם הראשונה הקובץ מתקין הכול, ובסוף הדפדפן נפתח על הממשק. ההוראות המלאות ב-[docs/install.md](docs/install.md).
+
+**ידנית:**
+
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
