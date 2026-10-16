@@ -1,0 +1,6 @@
+numpy>=1.26
+opencv-python>=4.9
+scikit-learn>=1.4
+ultralytics>=8.3
+lap>=0.5.12  # needed by the ultralytics ByteTrack tracker
+pytest>=8

@@ -1,0 +1,12 @@
+{
+  "points": {
+    "baseline_left_corner": [330, 170],
+    "baseline_right_corner": [950, 170],
+    "lane_ft_left": [513, 312],
+    "lane_ft_right": [767, 312],
+    "midcourt_left": [40, 700],
+    "midcourt_right": [1240, 700]
+  },
+  "rim": [640, 69],
+  "rim_radius_px": 30
+}
